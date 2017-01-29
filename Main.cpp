@@ -619,7 +619,7 @@ plugin_info_t Plugin_info = {
 	META_INTERFACE_VERSION, // ifvers
 	"SafeNameAndChat",      // name
 	PLUGIN_VERSION,         // version
-	"2016.01.24",           // date
+	"2017.01.30",           // date
 	"WPMG.PRoSToC0der",     // author
 	"http://snac.wpmg.ru/", // url
 	"SNAC",                 // logtag, all caps please
