@@ -579,7 +579,7 @@ void OnClientUserInfoChanged_PreHook(edict_t *pPlayerEntity, char *infoBuffer) {
 			if ((utf16NewName[i] == '#' && g_pcvarNameReplaceNumberSign->value) ||
 			    (utf16NewName[i] == '%' && g_pcvarNameReplacePercentSign->value) ||
 			    (utf16NewName[i] == '&' && g_pcvarNameReplaceAmpersand->value) ||
-			    (n && g_pcvarNameReplacePlusSign->value && utf16CorrectedName[n-1] == '+' && (isdigit(utf16NewName[i]) || isalpha(utf16NewName[i]))))
+			    (n && g_pcvarNameReplacePlusSign->value && utf16CorrectedName[n-1] == '+' && utf16NewName[i] <= 127 && (isdigit(utf16NewName[i]) || isalpha(utf16NewName[i]))))
 			{
 				utf16CorrectedName[n++] = 0xFF00 + utf16NewName[i] - 0x20;
 			} else {
