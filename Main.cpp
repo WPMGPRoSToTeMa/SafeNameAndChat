@@ -445,24 +445,26 @@ bool IsUtf16CharMeanSpace(char16_t ch) {
 	return false;
 }
 
-cvar_t g_cvarVersion                = {"SNAC_Version"                , Plugin_info.version, FCVAR_EXTDLL | FCVAR_SERVER, 0, nullptr};
+cvar_t g_cvarVersion                               = {"SNAC_Version"                               , Plugin_info.version, FCVAR_EXTDLL | FCVAR_SERVER, 0, nullptr};
 
-cvar_t g_cvarChatReplaceNumberSign  = {"SNAC_Chat_ReplaceNumberSign" , "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarChatReplacePercentSign = {"SNAC_Chat_ReplacePercentSign", "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarChatRemoveUnprintable  = {"SNAC_Chat_RemoveUnprintable" , "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarChatTrimSpaces         = {"SNAC_Chat_TrimSpaces"        , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarChatReplaceNumberSign                 = {"SNAC_Chat_ReplaceNumberSign"                , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarChatReplacePercentSign                = {"SNAC_Chat_ReplacePercentSign"               , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarChatRemoveUnprintable                 = {"SNAC_Chat_RemoveUnprintable"                , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarChatTrimSpaces                        = {"SNAC_Chat_TrimSpaces"                       , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarChatTruncateToEngineLimitAfterReplace = {"SNAC_Chat_TruncateToEngineLimitAfterReplace", "1"                , FCVAR_EXTDLL               , 0, nullptr};
 
-cvar_t g_cvarNameReplaceNumberSign  = {"SNAC_Name_ReplaceNumberSign" , "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarNameReplacePercentSign = {"SNAC_Name_ReplacePercentSign", "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarNameReplaceAmpersand   = {"SNAC_Name_ReplaceAmpersand"  , "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarNameReplacePlusSign    = {"SNAC_Name_ReplacePlusSign"   , "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarNameRemoveUnprintable  = {"SNAC_Name_RemoveUnprintable" , "1"                , FCVAR_EXTDLL               , 0, nullptr};
-cvar_t g_cvarNameTrimSpaces         = {"SNAC_Name_TrimSpaces"        , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarNameReplaceNumberSign                 = {"SNAC_Name_ReplaceNumberSign"                , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarNameReplacePercentSign                = {"SNAC_Name_ReplacePercentSign"               , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarNameReplaceAmpersand                  = {"SNAC_Name_ReplaceAmpersand"                 , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarNameReplacePlusSign                   = {"SNAC_Name_ReplacePlusSign"                  , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarNameRemoveUnprintable                 = {"SNAC_Name_RemoveUnprintable"                , "1"                , FCVAR_EXTDLL               , 0, nullptr};
+cvar_t g_cvarNameTrimSpaces                        = {"SNAC_Name_TrimSpaces"                       , "1"                , FCVAR_EXTDLL               , 0, nullptr};
 
 cvar_t *g_pcvarChatReplaceNumberSign;
 cvar_t *g_pcvarChatReplacePercentSign;
 cvar_t *g_pcvarChatRemoveUnprintable;
 cvar_t *g_pcvarChatTrimSpaces;
+cvar_t *g_pcvarChatTruncateToEngineLimitAfterReplace;
 
 cvar_t *g_pcvarNameReplaceNumberSign;
 cvar_t *g_pcvarNameReplacePercentSign;
@@ -523,6 +525,25 @@ void OnClientCommand_PreHook(edict_t *pPlayerEntity) {
 			isStrBegin = false;
 		}
 		utf16Args[lastNonSpacePos] = u'\0';
+
+		if (g_pcvarChatTruncateToEngineLimitAfterReplace->value != 0.0f) {
+			size_t utf8Length = 0;
+			size_t maxLength = restoreQuotes ? 125 : 127;
+			for (size_t i = 0; i != lastNonSpacePos; i++) {
+				if (utf16Args[i] < 0x80) {
+					utf8Length++;
+				} else if (utf16Args[i] < 0x800) {
+					utf8Length += 2;
+				} else {
+					utf8Length += 3;
+				}
+
+				if (utf8Length > maxLength) {
+					utf16Args[i] = u'\0';
+					break;
+				}
+			}
+		}
 
 		if (restoreQuotes) {
 			origArgs = CMD_ARGS();
@@ -619,7 +640,7 @@ plugin_info_t Plugin_info = {
 	META_INTERFACE_VERSION, // ifvers
 	"SafeNameAndChat",      // name
 	PLUGIN_VERSION,         // version
-	"2017.01.30",           // date
+	"2017.02.01",           // date
 	"WPMG.PRoSToC0der",     // author
 	"http://snac.wpmg.ru/", // url
 	"SNAC",                 // logtag, all caps please
@@ -652,6 +673,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, m
 	CVAR_REGISTER(&g_cvarChatReplacePercentSign);
 	CVAR_REGISTER(&g_cvarChatRemoveUnprintable);
 	CVAR_REGISTER(&g_cvarChatTrimSpaces);
+	CVAR_REGISTER(&g_cvarChatTruncateToEngineLimitAfterReplace);
 
 	CVAR_REGISTER(&g_cvarNameReplaceNumberSign);
 	CVAR_REGISTER(&g_cvarNameReplacePercentSign);
@@ -660,17 +682,18 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, m
 	CVAR_REGISTER(&g_cvarNameRemoveUnprintable);
 	CVAR_REGISTER(&g_cvarNameTrimSpaces);
 
-	g_pcvarChatReplaceNumberSign  = CVAR_GET_POINTER(g_cvarChatReplaceNumberSign .name);
-	g_pcvarChatReplacePercentSign = CVAR_GET_POINTER(g_cvarChatReplacePercentSign.name);
-	g_pcvarChatRemoveUnprintable  = CVAR_GET_POINTER(g_cvarChatRemoveUnprintable .name);
-	g_pcvarChatTrimSpaces         = CVAR_GET_POINTER(g_cvarChatTrimSpaces        .name);
+	g_pcvarChatReplaceNumberSign                 = CVAR_GET_POINTER(g_cvarChatReplaceNumberSign                .name);
+	g_pcvarChatReplacePercentSign                = CVAR_GET_POINTER(g_cvarChatReplacePercentSign               .name);
+	g_pcvarChatRemoveUnprintable                 = CVAR_GET_POINTER(g_cvarChatRemoveUnprintable                .name);
+	g_pcvarChatTrimSpaces                        = CVAR_GET_POINTER(g_cvarChatTrimSpaces                       .name);
+	g_pcvarChatTruncateToEngineLimitAfterReplace = CVAR_GET_POINTER(g_cvarChatTruncateToEngineLimitAfterReplace.name);
 
-	g_pcvarNameReplaceNumberSign  = CVAR_GET_POINTER(g_cvarNameReplaceNumberSign .name);
-	g_pcvarNameReplacePercentSign = CVAR_GET_POINTER(g_cvarNameReplacePercentSign.name);
-	g_pcvarNameReplaceAmpersand   = CVAR_GET_POINTER(g_cvarNameReplaceAmpersand  .name);
-	g_pcvarNameReplacePlusSign    = CVAR_GET_POINTER(g_cvarNameReplacePlusSign   .name);
-	g_pcvarNameRemoveUnprintable  = CVAR_GET_POINTER(g_cvarNameRemoveUnprintable .name);
-	g_pcvarNameTrimSpaces         = CVAR_GET_POINTER(g_cvarNameTrimSpaces        .name);
+	g_pcvarNameReplaceNumberSign                 = CVAR_GET_POINTER(g_cvarNameReplaceNumberSign                .name);
+	g_pcvarNameReplacePercentSign                = CVAR_GET_POINTER(g_cvarNameReplacePercentSign               .name);
+	g_pcvarNameReplaceAmpersand                  = CVAR_GET_POINTER(g_cvarNameReplaceAmpersand                 .name);
+	g_pcvarNameReplacePlusSign                   = CVAR_GET_POINTER(g_cvarNameReplacePlusSign                  .name);
+	g_pcvarNameRemoveUnprintable                 = CVAR_GET_POINTER(g_cvarNameRemoveUnprintable                .name);
+	g_pcvarNameTrimSpaces                        = CVAR_GET_POINTER(g_cvarNameTrimSpaces                       .name);
 
 	ExecPluginConfig();
 
