@@ -892,7 +892,7 @@ string SafePositionalPrintf(string format, vector<string> args, bool positional 
 }
 
 void PF_MessageEnd_I() {
-	LOG_CONSOLE(PLID, "Message end! %d %d", *g_msgType, g_msgBuffer->cursize);
+	//LOG_CONSOLE(PLID, "Message end! %d %d", *g_msgType, g_msgBuffer->cursize);
 	const char *temp = GET_USER_MSG_NAME(PLID, *g_msgType, nullptr);
 	string msgName = temp != nullptr ? temp : "";
 	if (msgName == "SayText" || msgName == "TextMsg") {
