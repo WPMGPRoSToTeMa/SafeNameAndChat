@@ -382,13 +382,19 @@ void Init() {
 
 	dlclose(handle);
 
+	LOG_CONSOLE("It's ok");
+
 	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
 	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
+	LOG_CONSOLE("I'm fine");
 	memcpy(g_originalBytes, (void*)g_engfuncs.pfnMessageEnd, 5);
+	LOG_CONSOLE("Are you ok guys?");
 	g_patchedBytes[0] = char(0xE9);
 	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
+	LOG_CONSOLE("Wow");
 	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
+	LOG_CONSOLE("Hmm");
 #endif
 }
 
