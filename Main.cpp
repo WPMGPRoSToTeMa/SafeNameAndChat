@@ -383,12 +383,12 @@ void Init() {
 	dlclose(handle);
 
 	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
-	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
+	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
 	memcpy(g_originalBytes, (void*)g_engfuncs.pfnMessageEnd, 5);
 	g_patchedBytes[0] = char(0xE9);
 	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
-	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
+	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
 #endif
 }
 
@@ -965,10 +965,10 @@ void PF_MessageEnd_I() {
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
 #else
 	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
-	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
+	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
 	g_engfuncs.pfnMessageEnd();
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
-	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
+	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
 #endif
 }
