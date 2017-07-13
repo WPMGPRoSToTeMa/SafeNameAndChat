@@ -422,8 +422,6 @@ void GiveFnptrsToDll(enginefuncs_t *pEngFuncs, globalvars_t *pGlobalVars) {
 	memcpy(&g_engfuncs, pEngFuncs, sizeof(g_engfuncs));
 	gpGlobals = pGlobalVars;
 
-	Init();
-
 #ifdef _WIN32
 	__asm
 	{
@@ -800,6 +798,8 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, m
 
 	gpMetaGlobals = pMGlobals;
 	gpGamedllFuncs = pGamedllFuncs;
+
+	Init();
 
 	CVAR_REGISTER(&g_cvarVersion);
 	CVAR_SET_STRING(g_cvarVersion.name, g_cvarVersion.string);
