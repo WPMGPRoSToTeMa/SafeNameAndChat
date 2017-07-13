@@ -1,3 +1,3 @@
 #pragma once
 
-const char PLUGIN_VERSION[] = "1.1";
+const char PLUGIN_VERSION[] = "1.2 Beta";

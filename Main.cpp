@@ -372,33 +372,23 @@ void Init() {
 	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
 #else
-	LOG_CONSOLE(PLID, "Pre hello");
 	Dl_info dlinfo;
 	dladdr((void*)g_engfuncs.pfnMessageEnd, &dlinfo);
-	LOG_CONSOLE(PLID, "Hello");
 
 	auto handle = dlopen(dlinfo.dli_fname, RTLD_NOW);
-	LOG_CONSOLE(PLID, "How are you?");
 
 	g_msgBuffer = (decltype(g_msgBuffer))dlsym(handle, "gMsgBuffer");
 	g_msgType = (decltype(g_msgType))dlsym(handle, "gMsgType");
-	LOG_CONSOLE(PLID, "It should be here");
 
 	dlclose(handle);
 
-	LOG_CONSOLE(PLID, "It's ok");
-
 	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
 	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
-	LOG_CONSOLE(PLID, "I'm fine");
 	memcpy(g_originalBytes, (void*)g_engfuncs.pfnMessageEnd, 5);
-	LOG_CONSOLE(PLID, "Are you ok guys?");
 	g_patchedBytes[0] = char(0xE9);
 	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
-	LOG_CONSOLE(PLID, "Wow");
 	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
-	LOG_CONSOLE(PLID, "Hmm");
 #endif
 }
 
