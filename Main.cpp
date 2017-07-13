@@ -296,7 +296,9 @@ bool PatternMemoryEqual(const void* memory, const int* pattern, int size) {
 }
 
 uintptr_t FindMemoryByPattern(void* startPtr, string pattern) {
-	pattern.erase(std::remove_if(pattern.begin(), pattern.end(), std::isspace), pattern.end());
+	pattern.erase(std::remove_if(pattern.begin(), pattern.end(), [](char c) {
+		return std::isspace(static_cast<unsigned char>(c));
+	}), pattern.end());
 
 	auto HexDigitToNum = [](char hexDigit) -> int { return ('0' <= hexDigit && hexDigit <= '9') ? (hexDigit - '0') : ((hexDigit - 'A') + 10); };
 
@@ -328,8 +330,11 @@ struct {
 } *g_msgBuffer;
 int *g_msgType;
 
+#ifndef _WIN32
+#include <sys/mman.h>
 #ifndef PAGESIZE
 constexpr auto PAGESIZE = 0x1000;
+#endif
 #endif
 
 void Init() {
@@ -368,21 +373,21 @@ void Init() {
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
 #else
 	Dl_info dlinfo;
-	dladdr(g_engfuncs.pfnMessageEnd, &dlinfo);
+	dladdr((void*)g_engfuncs.pfnMessageEnd, &dlinfo);
 
 	auto handle = dlopen(dlinfo.dli_fname, RTLD_NOW);
 
-	g_msgBuffer = dlsym(handle, "gMsgBuffer");
-	g_msgType = dlsym(handle, "gMsgType");
+	g_msgBuffer = (decltype(g_msgBuffer))dlsym(handle, "gMsgBuffer");
+	g_msgType = (decltype(g_msgType))dlsym(handle, "gMsgType");
 
 	dlclose(handle);
 
 	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
 	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
-	memcpy(g_originalBytes, g_engfuncs.pfnMessageEnd, 5);
+	memcpy(g_originalBytes, (void*)g_engfuncs.pfnMessageEnd, 5);
 	g_patchedBytes[0] = char(0xE9);
 	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
-	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
+	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
 #endif
 }
@@ -961,9 +966,9 @@ void PF_MessageEnd_I() {
 #else
 	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
 	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
-	memcpy(g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
+	memcpy((void*)g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
 	g_engfuncs.pfnMessageEnd();
-	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
+	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
 #endif
 }
