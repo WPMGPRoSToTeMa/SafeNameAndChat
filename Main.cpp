@@ -1,6 +1,14 @@
 ﻿#include <extdll.h>
 #include <meta_api.h>
 #include "Main.h"
+#include <string>
+#include <algorithm>
+#include <cctype>
+#include <memory>
+#include <vector>
+#include <string>
+
+using namespace std;
 
 extern void OnClientCommand_PreHook(edict_t *pPlayerEntity);
 extern void OnClientUserInfoChanged_PreHook(edict_t *pPlayerEntity, char *infoBuffer);
@@ -269,6 +277,116 @@ static const uint32_t g_isPrintTable[2048] = {
 enginefuncs_t g_engfuncs;
 globalvars_t *gpGlobals;
 
+extern void PF_MessageEnd_I();
+
+char g_originalBytes[5];
+char g_patchedBytes[5];
+
+bool PatternMemoryEqual(const void* memory, const int* pattern, int size) {
+	for (int i = 0; i < size; i++) {
+		if (pattern[i] == -1)
+			continue;
+		if (((byte *)memory)[i] == pattern[i])
+			continue;
+
+		return false;
+	}
+
+	return true;
+}
+
+uintptr_t FindMemoryByPattern(void* startPtr, string pattern) {
+	pattern.erase(std::remove_if(pattern.begin(), pattern.end(), std::isspace), pattern.end());
+
+	auto HexDigitToNum = [](char hexDigit) -> int { return ('0' <= hexDigit && hexDigit <= '9') ? (hexDigit - '0') : ((hexDigit - 'A') + 10); };
+
+	auto searchSize = pattern.length() / 2;
+
+	auto search = std::make_unique<int[]>(searchSize);
+	for (size_t i = 0; i < searchSize; i++) {
+		if (pattern[2 * i] == '?')
+			search[i] = -1;
+		else
+			search[i] = ((byte)HexDigitToNum(pattern[2 * i]) << 4) | ((byte)HexDigitToNum(pattern[2 * i + 1]));
+	}
+
+	auto codeBase = (uintptr_t)startPtr;
+
+	for (auto codePtr = codeBase; ; codePtr++) {
+		if (PatternMemoryEqual((const void *)codePtr, search.get(), searchSize)) {
+			return codePtr;
+		}
+	}
+}
+
+struct {
+	const char *buffername;
+	uint16 flags;
+	byte *data;
+	int maxsize;
+	int cursize;
+} *g_msgBuffer;
+int *g_msgType;
+
+#ifndef PAGESIZE
+constexpr auto PAGESIZE = 0x1000;
+#endif
+
+void Init() {
+	string gameName = GET_GAME_INFO(PLID, GINFO_NAME);
+	if (gameName != "cstrike" && gameName != "czero") {
+		return;
+	}
+#ifdef _WIN32
+	bool isReHLDS = false;
+	{
+		auto swds = GetModuleHandleA("swds.dll");
+		if (swds != nullptr) {
+			auto createInterface = GetProcAddress(swds, "CreateInterface");
+			if (((void* (*)(const char*, void*))createInterface)("VREHLDS_HLDS_API_VERSION001", nullptr) != nullptr) {
+				isReHLDS = true;
+			}
+		}
+	}
+
+	if (isReHLDS) {
+		uintptr_t addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 0F 85 ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 83 ?? 3A");
+		g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
+		g_msgType = *(int **)(addr + 15);
+	} else {
+		uintptr_t addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 74 11 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 ?? 5F 5E 5B C3 8B");
+		g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
+		g_msgType = *(int **)(addr + 28);
+	}
+
+	DWORD oldProtect;
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
+	memcpy(g_originalBytes, g_engfuncs.pfnMessageEnd, 5);
+	g_patchedBytes[0] = char(0xE9);
+	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
+	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
+#else
+	Dl_info dlinfo;
+	dladdr(g_engfuncs.pfnMessageEnd, &dlinfo);
+
+	auto handle = dlopen(dlinfo.dli_fname, RTLD_NOW);
+
+	g_msgBuffer = dlsym(handle, "gMsgBuffer");
+	g_msgType = dlsym(handle, "gMsgType");
+
+	dlclose(handle);
+
+	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
+	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
+	memcpy(g_originalBytes, g_engfuncs.pfnMessageEnd, 5);
+	g_patchedBytes[0] = char(0xE9);
+	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
+	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
+	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
+#endif
+}
+
 C_DLLEXPORT
 #ifdef _WIN32
 __declspec(naked)
@@ -288,6 +406,8 @@ void GiveFnptrsToDll(enginefuncs_t *pEngFuncs, globalvars_t *pGlobalVars) {
 
 	memcpy(&g_engfuncs, pEngFuncs, sizeof(g_engfuncs));
 	gpGlobals = pGlobalVars;
+
+	Init();
 
 #ifdef _WIN32
 	__asm
@@ -702,4 +822,148 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, m
 
 C_DLLEXPORT int Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON reason) {
 	return TRUE;
+}
+
+string SafePositionalPrintf(string format, vector<string> args, bool positional = true) {
+	string result{};
+	enum class State {
+		None,
+		FoundPercent,
+		FoundString,
+	} state = State::None;
+	size_t curArg = 0;
+	for (auto ch : format) {
+		switch (state) {
+		case State::None: {
+			if (ch == '%') {
+				state = State::FoundPercent;
+			} else {
+				result.push_back(ch);
+				state = State::None;
+			}
+		}
+		break;
+		case State::FoundPercent: {
+			if (ch == 's') {
+				state = State::FoundString;
+			} else {
+				result.push_back('%');
+				if (ch != '%') {
+					result.push_back(ch);
+				}
+				state = State::None;
+			}
+		}
+		break;
+		case State::FoundString: {
+			if ('1' <= ch && ch <= '9' && ch - '1' < args.size() && positional) {
+				result += args[ch - '1'];
+				state = State::None;
+			} else if (curArg < args.size()) {
+				result += args[curArg++];
+				result.push_back(ch);
+				state = State::None;
+			} else {
+				result.push_back('%');
+				result.push_back('s');
+				result.push_back(ch);
+				state = State::None;
+			}
+		}
+		break;
+		}
+	}
+	if (state == State::FoundPercent) {
+		result.push_back('%');
+	} else if (state == State::FoundString) {
+		if (curArg < args.size()) {
+			result += args[curArg++];
+		} else {
+			result.push_back('%');
+			result.push_back('s');
+		}
+	}
+	return result;
+}
+
+void PF_MessageEnd_I() {
+	LOG_CONSOLE(PLID, "Message end! %d %d", *g_msgType, g_msgBuffer->cursize);
+	const char *temp = GET_USER_MSG_NAME(PLID, *g_msgType, nullptr);
+	string msgName = temp != nullptr ? temp : "";
+	if (msgName == "SayText" || msgName == "TextMsg") {
+		int curPos = 0;
+
+		int arg = 0;
+		if (curPos != g_msgBuffer->cursize) {
+			arg = g_msgBuffer->data[curPos];
+			curPos++;
+		}
+		string format{};
+		if (curPos != g_msgBuffer->cursize) {
+			format = (const char*)&g_msgBuffer->data[curPos];
+			curPos += format.length() + 1;
+		}
+		vector<string> args{};
+		while (curPos != g_msgBuffer->cursize) {
+			args.emplace_back((const char*)&g_msgBuffer->data[curPos]);
+			curPos += args[args.size() - 1].length() + 1;
+		}
+
+		if (msgName == "SayText" && format[0] != '#') {
+			if (args.size() == 0) {
+				g_msgBuffer->cursize = 0;
+				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], "#Spec_PlayerItem");
+				g_msgBuffer->cursize += sizeof("#Spec_PlayerItem");
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], format.c_str());
+				g_msgBuffer->cursize += format.length() + 1;
+			} else {
+				g_msgBuffer->cursize = 0;
+				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], "#Spec_PlayerItem");
+				g_msgBuffer->cursize += sizeof("#Spec_PlayerItem");
+				if (arg != 0 && args[0] == "") {
+					args[0] = STRING(INDEXENT(arg)->v.netname);
+				}
+				string formatted = SafePositionalPrintf(format, args);
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], formatted.c_str());
+				g_msgBuffer->cursize += formatted.length() + 1;
+			}
+		} else if (msgName == "TextMsg" && format[0] != '#' && arg == HUD_PRINTTALK) {
+			if (args.size() == 0) {
+				g_msgBuffer->cursize = 0;
+				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], "#Spec_PlayerItem");
+				g_msgBuffer->cursize += sizeof("#Spec_PlayerItem");
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], format.c_str());
+				g_msgBuffer->cursize += format.length() + 1;
+			} else {
+				g_msgBuffer->cursize = 0;
+				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], "#Spec_PlayerItem");
+				g_msgBuffer->cursize += sizeof("#Spec_PlayerItem");
+				string formatted = SafePositionalPrintf(format, args);
+				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], formatted.c_str());
+				g_msgBuffer->cursize += formatted.length() + 1;
+			}
+		}
+
+		//LOG_MESSAGE(PLID, "%s: %s %s %s %s", GET_USER_MSG_NAME(PLID, *g_msgType, nullptr), format.c_str(), arg1.c_str(), arg2.c_str(), arg3.c_str());
+	}
+
+#ifdef _WIN32
+	DWORD oldProtect;
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
+	memcpy(g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
+	g_engfuncs.pfnMessageEnd();
+	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
+#else
+	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
+	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
+	memcpy(g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
+	g_engfuncs.pfnMessageEnd();
+	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
+	mprotect(addr/PAGESIZE*PAGESIZE, 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
+#endif
 }
