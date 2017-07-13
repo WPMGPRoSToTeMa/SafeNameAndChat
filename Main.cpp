@@ -372,13 +372,17 @@ void Init() {
 	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
 #else
+	LOG_CONSOLE(PLID, "Pre hello");
 	Dl_info dlinfo;
 	dladdr((void*)g_engfuncs.pfnMessageEnd, &dlinfo);
+	LOG_CONSOLE(PLID, "Hello");
 
 	auto handle = dlopen(dlinfo.dli_fname, RTLD_NOW);
+	LOG_CONSOLE(PLID, "How are you?");
 
 	g_msgBuffer = (decltype(g_msgBuffer))dlsym(handle, "gMsgBuffer");
 	g_msgType = (decltype(g_msgType))dlsym(handle, "gMsgType");
+	LOG_CONSOLE(PLID, "It should be here");
 
 	dlclose(handle);
 
