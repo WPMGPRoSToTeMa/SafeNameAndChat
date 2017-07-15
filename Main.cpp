@@ -825,7 +825,27 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, m
 	return TRUE;
 }
 
+void Deinit() {
+	string gameName = GET_GAME_INFO(PLID, GINFO_NAME);
+	if (gameName != "cstrike" && gameName != "czero") {
+		return;
+	}
+#ifdef _WIN32
+	DWORD oldProtect;
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
+	memcpy(g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
+#else
+	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
+	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
+	memcpy((void*)g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
+	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
+#endif
+}
+
 C_DLLEXPORT int Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON reason) {
+	Deinit();
+
 	return TRUE;
 }
 
@@ -891,6 +911,53 @@ string SafePositionalPrintf(string format, vector<string> args, bool positional 
 	return result;
 }
 
+string FitUtf8_Helper(string str, size_t maxByteCount) {
+	if (str.length() <= maxByteCount)
+		return str;
+	
+	str.resize(maxByteCount + 1);
+
+	/*bool addN = false;
+	if (str[str.length() - 1] == '\n') {
+		str.pop_back();
+		addN = true;
+	}*/
+
+	char last = str[str.length() - 1];
+	str.pop_back();
+	if (((unsigned char)last & (0x80 | 0x40)) == 0x80) {
+		while (true) {
+			char ch = str[str.length() - 1];
+			if (((unsigned char)ch & 0x80) == 0) {
+				break;
+			}
+
+			str.pop_back();
+
+			if (((unsigned char)ch & (0x80 | 0x40)) == (0x80 | 0x40)) {
+				break;
+			}
+		}
+	}
+
+	/*if (addN) {
+		str.push_back('\n');
+	}*/
+
+	return str;
+}
+
+string FitUtf8(string str, size_t maxByteCount) {
+	str = FitUtf8_Helper(str, maxByteCount);
+
+	if (str[str.length() - 1] != '\n') {
+		str = FitUtf8_Helper(str, maxByteCount - 1);
+		str.push_back('\n');
+	}
+
+	return str;
+}
+
 void PF_MessageEnd_I() {
 	//LOG_CONSOLE(PLID, "Message end! %d %d", *g_msgType, g_msgBuffer->cursize);
 	const char *temp = GET_USER_MSG_NAME(PLID, *g_msgType, nullptr);
@@ -920,6 +987,7 @@ void PF_MessageEnd_I() {
 				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], "#Spec_PlayerItem");
 				g_msgBuffer->cursize += sizeof("#Spec_PlayerItem");
+				format = FitUtf8(format, 192 - g_msgBuffer->cursize - 1);
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], format.c_str());
 				g_msgBuffer->cursize += format.length() + 1;
 			} else {
@@ -930,7 +998,7 @@ void PF_MessageEnd_I() {
 				if (arg != 0 && args[0] == "") {
 					args[0] = STRING(INDEXENT(arg)->v.netname);
 				}
-				string formatted = SafePositionalPrintf(format, args);
+				string formatted = FitUtf8(SafePositionalPrintf(format, args), 192 - g_msgBuffer->cursize - 1);
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], formatted.c_str());
 				g_msgBuffer->cursize += formatted.length() + 1;
 			}
@@ -940,6 +1008,7 @@ void PF_MessageEnd_I() {
 				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], "#Spec_PlayerItem");
 				g_msgBuffer->cursize += sizeof("#Spec_PlayerItem");
+				format = FitUtf8(format, 192 - g_msgBuffer->cursize - 1);
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], format.c_str());
 				g_msgBuffer->cursize += format.length() + 1;
 			} else {
@@ -947,7 +1016,7 @@ void PF_MessageEnd_I() {
 				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], "#Spec_PlayerItem");
 				g_msgBuffer->cursize += sizeof("#Spec_PlayerItem");
-				string formatted = SafePositionalPrintf(format, args);
+				string formatted = FitUtf8(SafePositionalPrintf(format, args), 192 - g_msgBuffer->cursize - 1);
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], formatted.c_str());
 				g_msgBuffer->cursize += formatted.length() + 1;
 			}
