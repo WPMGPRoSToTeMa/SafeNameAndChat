@@ -981,7 +981,7 @@ void PF_MessageEnd_I() {
 			curPos += args[args.size() - 1].length() + 1;
 		}
 
-		if (msgName == "SayText" && format[0] != '#') {
+		if (msgName == "SayText" && format[0] != '#' && !(args.size() != 0 && format.find('#') != string::npos)) {
 			if (args.size() == 0) {
 				g_msgBuffer->cursize = 0;
 				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
@@ -1002,7 +1002,7 @@ void PF_MessageEnd_I() {
 				strcpy((char*)&g_msgBuffer->data[g_msgBuffer->cursize], formatted.c_str());
 				g_msgBuffer->cursize += formatted.length() + 1;
 			}
-		} else if (msgName == "TextMsg" && format[0] != '#' && arg == HUD_PRINTTALK) {
+		} else if (msgName == "TextMsg" && format[0] != '#' && arg == HUD_PRINTTALK && !(args.size() != 0 && format.find('#') != string::npos)) {
 			if (args.size() == 0) {
 				g_msgBuffer->cursize = 0;
 				g_msgBuffer->data[g_msgBuffer->cursize++] = arg;
