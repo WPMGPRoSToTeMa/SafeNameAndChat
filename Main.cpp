@@ -378,7 +378,13 @@ void Init() {
 	auto handle = dlopen(dlinfo.dli_fname, RTLD_NOW);
 
 	g_msgBuffer = (decltype(g_msgBuffer))dlsym(handle, "gMsgBuffer");
-	g_msgType = (decltype(g_msgType))dlsym(handle, "gMsgType");
+	if (g_msgBuffer != nullptr) {
+		g_msgType = (decltype(g_msgType))dlsym(handle, "gMsgType");
+	} else {
+		uintptr_t addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 0F 85 ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 83 ?? 3A");
+		g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
+		g_msgType = *(int **)(addr + 15);
+	}
 
 	dlclose(handle);
 
@@ -1029,14 +1035,18 @@ void PF_MessageEnd_I() {
 	DWORD oldProtect;
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
 	memcpy(g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
 	g_engfuncs.pfnMessageEnd();
+	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
 	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
 #else
 	uintptr_t addr = (uintptr_t)g_engfuncs.pfnMessageEnd;
 	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_originalBytes, 5);
+	mprotect((void*)(addr / PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
 	g_engfuncs.pfnMessageEnd();
+	mprotect((void*)(addr / PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ | PROT_WRITE);
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
 #endif
