@@ -103,8 +103,6 @@ jobs:
           files: |
             bin/linux32/SafeNameAndChat.so
             bin/win32/SafeNameAndChat.dll
-        env:
-          GITHUB_TOKEN: ${{ secrets.API_KEY }}
 
   cleanup_artifacts:
     needs: [publish]
