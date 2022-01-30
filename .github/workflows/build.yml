@@ -56,10 +56,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check dependencies
+      - name: Install dependencies
         run: |
-          dpkg --add-architecture i386
-          apt-get update
           apt-get install -y g++-8 g++-8-multilib
 
       - name: Build
