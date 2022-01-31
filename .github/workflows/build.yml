@@ -103,17 +103,3 @@ jobs:
           files: |
             bin/linux32/SafeNameAndChat.so
             bin/win32/SafeNameAndChat.dll
-
-  cleanup_artifacts:
-    needs: [publish]
-    name: 'Cleaning artifacts'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-    - name: Remove old artifacts
-      uses: c-hive/gha-remove-artifacts@v1
-      with:
-        age: '1 second'
-        skip-tags: true
-        skip-recent: 2
