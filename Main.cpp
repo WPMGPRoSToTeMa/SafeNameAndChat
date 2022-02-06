@@ -321,6 +321,105 @@ uintptr_t FindMemoryByPattern(void* startPtr, string pattern) {
 	}
 }
 
+#ifndef _WIN32
+
+#include <fcntl.h>
+#include <link.h>
+#include <sys/mman.h>
+
+uintptr_t FindSymbol(void *handle, const char *symbolName)
+{
+	link_map *dlmap;
+	struct stat dlstat;
+	int dlfile;
+	uintptr_t map_base;
+	Elf32_Ehdr *file_hdr;
+	Elf32_Shdr *sections, *shstrtab_hdr, *symtab_hdr, *strtab_hdr;
+	Elf32_Sym *symtab;
+	const char *shstrtab, *strtab;
+	uint16_t section_count;
+	uint32_t symbol_count;
+	uintptr_t address;
+
+	// let's give it a chance
+	address = (uintptr_t)dlsym(handle, symbolName);
+	if (address)
+		return address;
+
+	dlmap = (struct link_map *)handle;
+	symtab_hdr = nullptr;
+	strtab_hdr = nullptr;
+
+	dlfile = open(dlmap->l_name, O_RDONLY);
+	if (dlfile == -1 || fstat(dlfile, &dlstat) == -1) {
+		close(dlfile);
+		return 0;
+	}
+
+	// Map library file into memory
+	file_hdr = (Elf32_Ehdr *)mmap(nullptr, dlstat.st_size, PROT_READ, MAP_PRIVATE, dlfile, 0);
+	map_base = (uintptr_t)file_hdr;
+	close(dlfile);
+	if (file_hdr == MAP_FAILED)
+		return 0;
+
+	if (file_hdr->e_shoff == 0 || file_hdr->e_shstrndx == SHN_UNDEF) {
+		munmap(file_hdr, dlstat.st_size);
+		return 0;
+	}
+
+	sections = (Elf32_Shdr *)(map_base + file_hdr->e_shoff);
+	section_count = file_hdr->e_shnum;
+
+	// Get ELF section header string table
+	shstrtab_hdr = &sections[file_hdr->e_shstrndx];
+	shstrtab = (const char *)(map_base + shstrtab_hdr->sh_offset);
+
+	// Iterate sections while looking for ELF symbol table and string table
+	for (uint16_t i = 0; i < section_count; i++)
+	{
+		Elf32_Shdr &hdr = sections[i];
+		const char *section_name = shstrtab + hdr.sh_name;
+		if (strcmp(section_name, ".symtab") == 0) {
+			symtab_hdr = &hdr;
+		}
+		else if (strcmp(section_name, ".strtab") == 0) {
+			strtab_hdr = &hdr;
+		}
+	}
+
+	if (!symtab_hdr || !strtab_hdr) {
+		munmap(file_hdr, dlstat.st_size);
+		return 0;
+	}
+
+	symtab = (Elf32_Sym *)(map_base + symtab_hdr->sh_offset);
+	strtab = (const char *)(map_base + strtab_hdr->sh_offset);
+	symbol_count = symtab_hdr->sh_size / symtab_hdr->sh_entsize;
+
+	// Iterate symbol table
+	for (uint32_t i = 0; i < symbol_count; i++)
+	{
+		Elf32_Sym &sym = symtab[i];
+		unsigned char sym_type = ELF32_ST_TYPE(sym.st_info);
+		const char *sym_name = strtab + sym.st_name;
+
+		// Skip symbols that are undefined or do not refer to functions or objects
+		if (sym.st_shndx == SHN_UNDEF ||
+			(sym_type != STT_FUNC && sym_type != STT_OBJECT))
+			continue;
+
+		if (strcmp(sym_name, symbolName) == 0) {
+			address = (uintptr_t)(dlmap->l_addr + sym.st_value);
+			break;
+		}
+	}
+
+	munmap(file_hdr, dlstat.st_size);
+	return address;
+}
+#endif
+
 struct {
 	const char *buffername;
 	uint16 flags;
@@ -377,9 +476,9 @@ void Init() {
 
 	auto handle = dlopen(dlinfo.dli_fname, RTLD_NOW);
 
-	g_msgBuffer = (decltype(g_msgBuffer))dlsym(handle, "gMsgBuffer");
+	g_msgBuffer = (decltype(g_msgBuffer))FindSymbol(handle, "gMsgBuffer");
 	if (g_msgBuffer != nullptr) {
-		g_msgType = (decltype(g_msgType))dlsym(handle, "gMsgType");
+		g_msgType = (decltype(g_msgType))FindSymbol(handle, "gMsgType");
 	} else {
 		uintptr_t addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 0F 85 ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 83");
 		g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
@@ -705,7 +804,7 @@ void OnClientUserInfoChanged_PreHook(edict_t *pPlayerEntity, char *infoBuffer) {
 
 	const char *oldName = GetClientName(pPlayerEntity);
 	const char *newName = INFOKEY_VALUE(infoBuffer, "name");
-	
+
 	if (oldName[0] == '\0' || !FStrEq(newName, oldName)) {
 		char16_t utf16NewName[32];
 		FromUtf8ToUtf16(utf16NewName, newName);
@@ -920,7 +1019,7 @@ string SafePositionalPrintf(string format, vector<string> args, bool positional 
 string FitUtf8_Helper(string str, size_t maxByteCount) {
 	if (str.length() <= maxByteCount)
 		return str;
-	
+
 	str.resize(maxByteCount + 1);
 
 	/*bool addN = false;
