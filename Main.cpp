@@ -281,6 +281,7 @@ extern void PF_MessageEnd_I();
 
 char g_originalBytes[5];
 char g_patchedBytes[5];
+bool g_isMessageEndHooked = false;
 
 bool PatternMemoryEqual(const void* memory, const int* pattern, int size) {
 	for (int i = 0; i < size; i++) {
@@ -313,12 +314,52 @@ uintptr_t FindMemoryByPattern(void* startPtr, string pattern) {
 	}
 
 	auto codeBase = (uintptr_t)startPtr;
+#ifdef _WIN32
+	const auto maxScan = (uintptr_t)0x100000; // scan at most 1 MB, then give up
+#else
+	// On Linux the signature always lives inside the function pfnMessageEnd
+	// points to, so a small scan window is enough and can never walk into
+	// unmapped memory (which would crash the server with SIGBUS/SIGSEGV).
+	const auto maxScan = (uintptr_t)0x400; // scan at most 1 KB
+#endif
 
-	for (auto codePtr = codeBase; ; codePtr++) {
+#ifdef _WIN32
+	// Walk committed, readable memory regions so we never read past a mapped
+	// page (which would crash the server). Returns 0 if the pattern isn't found.
+	uintptr_t scanned = 0;
+	auto codePtr = codeBase;
+	while (scanned < maxScan) {
+		MEMORY_BASIC_INFORMATION mbi;
+		if (VirtualQuery((LPCVOID)codePtr, &mbi, sizeof(mbi)) == 0)
+			break;
+		if (mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0)
+			break;
+		if ((mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+			PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0)
+			break;
+
+		auto regionEnd = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+		if (codePtr < (uintptr_t)mbi.BaseAddress)
+			codePtr = (uintptr_t)mbi.BaseAddress;
+
+		for (; codePtr + searchSize <= regionEnd; codePtr++) {
+			if (PatternMemoryEqual((const void *)codePtr, search.get(), searchSize)) {
+				return codePtr;
+			}
+		}
+
+		scanned += regionEnd - (uintptr_t)mbi.BaseAddress;
+		codePtr = regionEnd;
+	}
+#else
+	for (auto codePtr = codeBase; codePtr + searchSize <= codeBase + maxScan; codePtr++) {
 		if (PatternMemoryEqual((const void *)codePtr, search.get(), searchSize)) {
 			return codePtr;
 		}
 	}
+#endif
+
+	return 0;
 }
 
 struct {
@@ -354,15 +395,25 @@ void Init() {
 		}
 	}
 
+	uintptr_t addr = 0;
+	int gMsgTypeOffset = 0;
 	if (isReHLDS) {
-		uintptr_t addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 0F 85 ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 83");
-		g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
-		g_msgType = *(int **)(addr + 15);
+		addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 0F 85 ?? ?? ?? ?? A1 ?? ?? ?? ?? 83 F8 40");
+		gMsgTypeOffset = 14;
 	} else {
-		uintptr_t addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 74 11 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 ?? 5F 5E 5B C3 8B");
-		g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
-		g_msgType = *(int **)(addr + 28);
+		addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 74 11 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 ?? 5F 5E 5B C3 8B");
+		gMsgTypeOffset = 28;
 	}
+
+	// Signature not found: this build of the engine isn't supported. Bail out
+	// without hooking so the server keeps running (name sanitization still works).
+	if (addr == 0) {
+		LOG_MESSAGE(PLID, "SafeNameAndChat: unable to locate message buffer for this engine build; chat sanitization disabled.");
+		return;
+	}
+
+	g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
+	g_msgType = *(int **)(addr + gMsgTypeOffset);
 
 	DWORD oldProtect;
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
@@ -371,6 +422,7 @@ void Init() {
 	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
 	memcpy(g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	VirtualProtect(g_engfuncs.pfnMessageEnd, 5, oldProtect, &oldProtect);
+	g_isMessageEndHooked = true;
 #else
 	Dl_info dlinfo;
 	dladdr((void*)g_engfuncs.pfnMessageEnd, &dlinfo);
@@ -381,9 +433,42 @@ void Init() {
 	if (g_msgBuffer != nullptr) {
 		g_msgType = (decltype(g_msgType))dlsym(handle, "gMsgType");
 	} else {
-		uintptr_t addr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd, "F6 05 ?? ?? ?? ?? 02 0F 85 ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 83");
-		g_msgBuffer = decltype(g_msgBuffer)(*(uintptr_t *)(addr + 2) - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
-		g_msgType = *(int **)(addr + 15);
+		// dlsym failed: ReHLDS hides gMsgBuffer/gMsgType behind a version
+		// script, and the engine is built with -fPIC, so those globals are
+		// accessed relative to the GOT base (ebx) rather than via absolute
+		// addresses. PF_MessageEnd_I contains:
+		//   test byte ptr [ebx + dispFlags], 2  ; gMsgBuffer.flags
+		//   jne  ...                            ; overflow -> Sys_Error
+		//   mov  edx, [ebx + dispType]          ; gMsgType
+		//   cmp  edx, svc_startofusermessages
+		// ebx (the GOT base) is set in the prologue by the standard i386 PIC
+		// sequence: call get_pc_thunk.bx ; add ebx, <got_off>.
+		uintptr_t foundAddr = FindMemoryByPattern(g_engfuncs.pfnMessageEnd,
+			"F6 83 ?? ?? ?? ?? 02 0F 85 ?? ?? ?? ?? 8B 93 ?? ?? ?? ?? 83 FA 3F");
+		if (foundAddr != 0) {
+			// Find the "add ebx, imm32" (81 C3 XX XX XX XX) GOT setup that
+			// precedes the signature, then derive the GOT base: ebx = p + imm.
+			uintptr_t ebx = 0;
+			for (int i = 0; i < 0x100; i++) {
+				uintptr_t p = foundAddr - i;
+				if (*(byte *)p == 0x81 && *(byte *)(p + 1) == 0xC3) {
+					ebx = p + *(int32_t *)(p + 2);
+					break;
+				}
+			}
+			if (ebx != 0) {
+				int32_t dispFlags = *(int32_t *)(foundAddr + 2);
+				int32_t dispType = *(int32_t *)(foundAddr + 15);
+				g_msgBuffer = decltype(g_msgBuffer)(ebx + dispFlags - offsetof(remove_pointer_t<decltype(g_msgBuffer)>, flags));
+				g_msgType = (decltype(g_msgType))(ebx + dispType);
+			}
+		}
+
+		if (g_msgBuffer == nullptr) {
+			dlclose(handle);
+			LOG_MESSAGE(PLID, "SafeNameAndChat: unable to locate message buffer for this engine build; chat sanitization disabled.");
+			return;
+		}
 	}
 
 	dlclose(handle);
@@ -395,6 +480,7 @@ void Init() {
 	*(uint32_t*)&g_patchedBytes[1] = (uint32_t)&PF_MessageEnd_I - ((uint32_t)g_engfuncs.pfnMessageEnd + 5);
 	memcpy((void*)g_engfuncs.pfnMessageEnd, g_patchedBytes, 5);
 	mprotect((void*)(addr/PAGESIZE*PAGESIZE), 5 + addr%PAGESIZE, PROT_EXEC | PROT_READ);
+	g_isMessageEndHooked = true;
 #endif
 }
 
@@ -834,6 +920,9 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, m
 void Deinit() {
 	string gameName = GET_GAME_INFO(PLID, GINFO_NAME);
 	if (gameName != "cstrike" && gameName != "czero") {
+		return;
+	}
+	if (!g_isMessageEndHooked) {
 		return;
 	}
 #ifdef _WIN32
